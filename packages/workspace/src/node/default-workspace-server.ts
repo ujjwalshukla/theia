@@ -23,7 +23,9 @@ import { injectable, inject, postConstruct } from "inversify";
 import { FileUri } from '@theia/core/lib/node';
 import { CliContribution } from '@theia/core/lib/node/cli';
 import { Deferred } from '@theia/core/lib/common/promise-util';
+import { MessageService, ILogger } from '@theia/core';
 import { WorkspaceServer } from "../common";
+// import URI from '@theia/core/lib/common/uri';
 
 @injectable()
 export class WorkspaceCliContribution implements CliContribution {
@@ -61,6 +63,12 @@ export class DefaultWorkspaceServer implements WorkspaceServer {
 
     @inject(WorkspaceCliContribution)
     protected readonly cliParams: WorkspaceCliContribution;
+
+    @inject(MessageService)
+    protected readonly messageService: MessageService;
+
+    @inject(ILogger)
+    protected readonly logger: ILogger;
 
     @postConstruct()
     protected async init() {
@@ -109,11 +117,50 @@ export class DefaultWorkspaceServer implements WorkspaceServer {
     private async readFromUserHome(): Promise<WorkspaceData | undefined> {
         const file = this.getUserStoragePath();
         if (await fs.pathExists(file)) {
-            const config = await fs.readJson(file);
+            const rawContent = await fs.readFile(file, 'utf-8');
+            const content = rawContent.trim();
+            if (!content) {
+                return undefined;
+            }
+
+            let config;
+            try {
+                config = JSON.parse(content);
+            } catch (error) {
+                error.message = `${file}:\n${error.message}`;
+                this.logger.warn('[CATCHED]', error);
+
+                const FIX_FILE = 'Fix';
+                const DELETE_FILE = 'Delete';
+                const USER_MESSAGE = `Parse error in '${file}':\nFile will be ignored...`;
+                this.messageService.warn(USER_MESSAGE, FIX_FILE, DELETE_FILE)
+                    .then(async selected => {
+                        // const uri = new URI(file);
+
+                        if (selected === FIX_FILE) {
+                            try {
+                                // const opener = await this.openerService.getOpener(uri);
+                                // await opener.open(uri);
+                                this.messageService.info('Once fixed, you should reload the application.');
+
+                            } catch (error) {
+                                this.messageService.warn(`Cannot open '${file}'...`);
+                                this.logger.warn(error);
+                            }
+
+                        } else if (selected === DELETE_FILE) {
+                            fs.remove(file);
+                        }
+                    });
+
+                return undefined;
+            }
+
             if (WorkspaceData.is(config)) {
                 return config;
             }
         }
+
         return undefined;
     }
 
